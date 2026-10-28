@@ -127,11 +127,13 @@ export const ShoppingListView: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const watchdogTimerRef = useRef<any>(null);
   const isStoppingRef = useRef<boolean>(false);
+  const isStartingRef = useRef<boolean>(false);
+  const lastStopTimeRef = useRef<number>(0);
 
-  // Analisi automatica del testo vocale (es. "3 litri di latte", "1 chilo di mele in frigo", "pasta")
-  const parseVoiceInput = (text: string) => {
+  // Analisi automatica di un singolo alimento vocale
+  const parseSingleVoiceItem = (text: string) => {
     let cleanText = text.trim();
-    if (!cleanText) return;
+    if (!cleanText) return null;
 
     let parsedQuantity = 1;
     let parsedUnit = 'pz';
@@ -180,49 +182,66 @@ export const ShoppingListView: React.FC = () => {
       parsedName = parsedName.charAt(0).toUpperCase() + parsedName.slice(1);
     }
 
-    // Deduci categoria in base alle parole chiave
-    const nameLow = parsedName.toLowerCase();
-    if (/latte|burro|formaggio|mozzarella|parmigiano|yogurt|ricotta|panna/i.test(nameLow)) {
-      parsedCategory = 'dairy';
-      if (!lower.includes('freezer') && !lower.includes('dispensa')) parsedLocation = 'fridge';
-    } else if (/mela|mele|banana|pomodor|insalata|carot|aranc|limon|verdura|frutta|zucchine/i.test(nameLow)) {
-      parsedCategory = 'produce';
-    } else if (/pollo|carne|manzo|maiale|pesce|salmone|tonno|prosciutto|salame/i.test(nameLow)) {
-      parsedCategory = 'meat';
-      if (!lower.includes('freezer')) parsedLocation = 'fridge';
-    } else if (/pasta|riso|farina|cereali/i.test(nameLow)) {
-      parsedCategory = 'grains';
-      if (!lower.includes('frigo') && !lower.includes('freezer')) parsedLocation = 'pantry';
-    } else if (/pane|biscotti|fette biscottate|brioche|croissant/i.test(nameLow)) {
-      parsedCategory = 'bakery';
-      if (!lower.includes('frigo') && !lower.includes('freezer')) parsedLocation = 'pantry';
-    } else if (/olio|aceto|sale|zucchero|pepe|spezie/i.test(nameLow)) {
-      parsedCategory = 'condiments';
-      if (!lower.includes('frigo') && !lower.includes('freezer')) parsedLocation = 'pantry';
-    } else if (/tonno in scatola|pelati|legumi|fagioli|piselli/i.test(nameLow)) {
-      parsedCategory = 'canned';
-      if (!lower.includes('frigo') && !lower.includes('freezer')) parsedLocation = 'pantry';
-    } else if (/surgelat|gelato|pizza surgelata|piselli surgelati/i.test(nameLow)) {
-      parsedCategory = 'frozen';
-      parsedLocation = 'freezer';
-    } else if (/acqua|birra|vino|succo|caffè|the|tè|cola/i.test(nameLow)) {
-      parsedCategory = 'beverages';
+    if (!parsedName) return null;
+
+    // Deduci categoria e reparto in base alle parole chiave
+    const detected = detectCategoryAndLocationFromName(parsedName);
+    parsedCategory = detected.category;
+    if (!lower.includes('freezer') && !lower.includes('dispensa') && !lower.includes('frigo')) {
+      parsedLocation = detected.location;
     }
 
-    addShoppingItem({
-      name: parsedName || 'Alimento vocale',
+    return {
+      name: parsedName,
       location: parsedLocation,
       category: parsedCategory,
       quantity: parsedQuantity,
       unit: parsedUnit,
+    };
+  };
+
+  // Analisi intelligente del parlato: supporta lista multipla (es. "latte, 2 kg di mele e pasta")
+  const parseVoiceInput = (text: string) => {
+    let cleanText = text.trim();
+    if (!cleanText) return;
+
+    // Riconosci se l'utente ha dettato più alimenti separati da virgola o " e " / " ed "
+    // Esempio: "latte, mele e birra" -> ["latte", "mele", "birra"]
+    const rawItems = cleanText
+      .split(/\s*,\s*|\s+\bed?\b\s+/i)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    const addedList: string[] = [];
+
+    rawItems.forEach((itemText) => {
+      const parsed = parseSingleVoiceItem(itemText);
+      if (parsed) {
+        addShoppingItem({
+          name: parsed.name,
+          location: parsed.location,
+          category: parsed.category,
+          quantity: parsed.quantity,
+          unit: parsed.unit,
+        });
+        addedList.push(`${parsed.name} (${parsed.quantity} ${parsed.unit})`);
+      }
     });
 
-    setVoiceNotice(`Aggiunto: "${parsedName}" (${parsedQuantity} ${parsedUnit})`);
-    setTimeout(() => setVoiceNotice(null), 3500);
+    if (addedList.length > 0) {
+      if (addedList.length === 1) {
+        setVoiceNotice(`Aggiunto: ${addedList[0]}`);
+      } else {
+        setVoiceNotice(`Aggiunti ${addedList.length} alimenti: ${addedList.join(', ')}`);
+      }
+      setTimeout(() => setVoiceNotice(null), 4000);
+    }
   };
 
   // Pulizia e stop sicuro di SpeechRecognition
   const cleanupRecognition = () => {
+    lastStopTimeRef.current = Date.now();
+    isStartingRef.current = false;
     if (watchdogTimerRef.current) {
       clearTimeout(watchdogTimerRef.current);
       watchdogTimerRef.current = null;
@@ -252,13 +271,24 @@ export const ShoppingListView: React.FC = () => {
     }
 
     // Se sta già ascoltando, ferma l'ascolto immediatamente
-    if (isListening || recognitionRef.current) {
+    if (isListening || recognitionRef.current || isStartingRef.current) {
       cleanupRecognition();
+      return;
+    }
+
+    // Protezione per Safari iOS: Se una sessione si è appena fermata da meno di 300ms,
+    // aspetta un momento per consentire ad AVAudioSession di deallocarsi
+    const timeSinceLastStop = Date.now() - lastStopTimeRef.current;
+    if (timeSinceLastStop < 250) {
+      setTimeout(() => {
+        toggleSpeechToText();
+      }, 250 - timeSinceLastStop);
       return;
     }
 
     // Assicura che l'istanza precedente sia completamente resettata
     cleanupRecognition();
+    isStartingRef.current = true;
 
     try {
       const recognition = new SpeechRecognitionClass();
@@ -270,18 +300,19 @@ export const ShoppingListView: React.FC = () => {
       let hasReceivedFinalResult = false;
 
       recognition.onstart = () => {
+        isStartingRef.current = false;
         setIsListening(true);
         setSpeechError(null);
         setInterimVoiceText('');
 
         // Watchdog per evitare blocchi infiniti tipici di iOS WebKit:
-        // Se entro 8 secondi non si riceve input, chiude pulitamente
+        // Se entro 9 secondi non si riceve input, chiude pulitamente
         if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
         watchdogTimerRef.current = setTimeout(() => {
           if (recognitionRef.current === recognition) {
             cleanupRecognition();
           }
-        }, 8000);
+        }, 9000);
       };
 
       recognition.onresult = (event: any) => {
@@ -309,7 +340,7 @@ export const ShoppingListView: React.FC = () => {
           // Una volta catturato il risultato finale, fermiamo prontamente la sessione
           setTimeout(() => {
             cleanupRecognition();
-          }, 300);
+          }, 250);
         }
       };
 
@@ -430,15 +461,24 @@ export const ShoppingListView: React.FC = () => {
 
           {/* Feedback Vocale attivo o Notifiche */}
           {isListening && (
-            <div className="mt-2.5 px-3 py-2 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-2 text-rose-700 text-xs font-bold animate-pulse">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
-              <span>
-                {interimVoiceText ? (
-                  <>Sto ascoltando: <em className="text-rose-900 font-extrabold underline">{interimVoiceText}</em></>
-                ) : (
-                  <>In ascolto... Pronuncia ad es. <em>"1 litro di latte in frigo"</em> o <em>"Pane"</em></>
-                )}
-              </span>
+            <div className="mt-2.5 px-3 py-2 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between text-rose-700 text-xs font-bold animate-pulse">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+                <span className="truncate">
+                  {interimVoiceText ? (
+                    <>Sto ascoltando: <em className="text-rose-900 font-extrabold underline">{interimVoiceText}</em></>
+                  ) : (
+                    <>In ascolto... Pronuncia ad es. <em>"Latte, 1 kg di mele e pasta"</em></>
+                  )}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={cleanupRecognition}
+                className="text-[10px] bg-rose-200 text-rose-900 px-2 py-0.5 rounded-lg shrink-0 font-bold hover:bg-rose-300 transition-colors"
+              >
+                Fine
+              </button>
             </div>
           )}
 
