@@ -247,11 +247,15 @@ export const ShoppingListView: React.FC = () => {
       watchdogTimerRef.current = null;
     }
     if (recognitionRef.current) {
-      try {
-        isStoppingRef.current = true;
-        recognitionRef.current.abort();
-      } catch (_) {}
+      const rec = recognitionRef.current;
       recognitionRef.current = null;
+      isStoppingRef.current = true;
+      try {
+        rec.stop();
+      } catch (_) {}
+      try {
+        rec.abort();
+      } catch (_) {}
     }
     setIsListening(false);
     setInterimVoiceText('');
@@ -337,10 +341,8 @@ export const ShoppingListView: React.FC = () => {
           hasReceivedFinalResult = true;
           setInterimVoiceText(finalTrans.trim());
           parseVoiceInput(finalTrans.trim());
-          // Una volta catturato il risultato finale, fermiamo prontamente la sessione
-          setTimeout(() => {
-            cleanupRecognition();
-          }, 250);
+          // Fermiamo subito l'ascolto per rilasciare il microfono e spegnere il pallino arancione
+          cleanupRecognition();
         }
       };
 
