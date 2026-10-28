@@ -103,7 +103,7 @@ export const ExpirationsView: React.FC<ExpirationsViewProps> = ({
             <img
               src="/nonescad.png"
               alt="Nessun alimento scaduto o in scadenza"
-              className="w-48 h-48 object-contain drop-shadow-md transform scale-105"
+              className="w-52 max-h-48 object-contain drop-shadow-md"
             />
           </div>
           <h3 className="font-extrabold text-zinc-900 text-sm mt-1">Tutto sotto controllo!</h3>
