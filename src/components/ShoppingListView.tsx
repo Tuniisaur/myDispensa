@@ -348,14 +348,15 @@ export const ShoppingListView: React.FC = () => {
         if (isStoppingRef.current) return;
         console.warn('Speech recognition error event:', event.error);
         if (event.error === 'not-allowed') {
-          setSpeechError('Microfono non consentito. Verifica i permessi in Impostazioni.');
+          setSpeechError('Microfono non consentito: controlla i permessi Safari (icona aA > Impostazioni sito web > Microfono) o in Impostazioni iPhone.');
         } else if (event.error === 'service-not-allowed') {
-          // Su iOS PWA Standalone (app installata da schermata home), Apple blocca SpeechRecognition a livello di sistema operativo (WebKit Bug 225298)
-          setSpeechError('Su app installata iOS, Apple disabilita il microfono web. Puoi dettare comodamente usando il tasto microfono della tastiera!');
+          setSpeechError('Servizio vocale non disponibile: abilita "Abilita Dettatura" in Impostazioni iPhone > Generali > Tastiera, oppure usa il microfono della tastiera.');
         } else if (event.error === 'network') {
-          setSpeechError('Errore di connessione durante il riconoscimento vocale.');
-        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          setSpeechError(`Avviso microfono (${event.error}). Puoi usare il tasto microfono della tastiera del telefono.`);
+          setSpeechError('Errore di connessione con il servizio di riconoscimento vocale.');
+        } else if (event.error === 'no-speech') {
+          setSpeechError('Nessuna voce rilevata. Prova a parlare più vicino al microfono.');
+        } else if (event.error !== 'aborted') {
+          setSpeechError(`Avviso microfono: ${event.error}. Puoi usare la dettatura dalla tastiera.`);
         }
         cleanupRecognition();
       };
