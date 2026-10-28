@@ -219,7 +219,7 @@ export const ShoppingListView: React.FC = () => {
   };
 
   // Gestione robusta Speech to Text compatibile con Safari iOS e Chrome
-  const toggleSpeechToText = async () => {
+  const toggleSpeechToText = () => {
     setSpeechError(null);
 
     const SpeechRecognitionClass =
@@ -231,7 +231,7 @@ export const ShoppingListView: React.FC = () => {
     }
 
     // Se sta già ascoltando, ferma l'ascolto
-    if (isListening) {
+    if (isListening || recognitionRef.current) {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -240,28 +240,6 @@ export const ShoppingListView: React.FC = () => {
       }
       setIsListening(false);
       return;
-    }
-
-    // Pulisci istanza precedente se presente
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (_) {}
-      recognitionRef.current = null;
-    }
-
-    // Su Safari iOS sblocca preventivamente la sessione microfono
-    if (navigator?.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      } catch (e: any) {
-        console.warn('getUserMedia audio error:', e);
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-          setSpeechError('Permesso microfono non concesso. Abilitalo nelle impostazioni del browser.');
-          return;
-        }
-      }
     }
 
     try {
@@ -287,10 +265,10 @@ export const ShoppingListView: React.FC = () => {
       recognition.onerror = (event: any) => {
         console.warn('Speech recognition error event:', event.error);
         if (event.error === 'not-allowed') {
-          setSpeechError('Accesso al microfono bloccato. Tocca di nuovo e consenti il microfono.');
-        } else if (event.error === 'no-speech') {
-          // Nessuna voce rilevata, non mostrare errore invadente
-        } else if (event.error !== 'aborted') {
+          setSpeechError('Accesso al microfono non consentito. Verifica i permessi Safari in Impostazioni.');
+        } else if (event.error === 'service-not-allowed') {
+          setSpeechError('Attiva "Riconoscimento vocale" nelle Impostazioni Privacy del tuo iPhone.');
+        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
           setSpeechError(`Avviso microfono: ${event.error}`);
         }
         setIsListening(false);
@@ -303,6 +281,7 @@ export const ShoppingListView: React.FC = () => {
       };
 
       recognitionRef.current = recognition;
+      // Chiamata immediata e sincrona per garantire il "user gesture context" su Safari
       recognition.start();
     } catch (err: any) {
       console.error('Error starting recognition:', err);
