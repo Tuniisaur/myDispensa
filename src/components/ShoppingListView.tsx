@@ -123,7 +123,10 @@ export const ShoppingListView: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const [interimVoiceText, setInterimVoiceText] = useState<string>('');
   const recognitionRef = useRef<any>(null);
+  const watchdogTimerRef = useRef<any>(null);
+  const isStoppingRef = useRef<boolean>(false);
 
   // Analisi automatica del testo vocale (es. "3 litri di latte", "1 chilo di mele in frigo", "pasta")
   const parseVoiceInput = (text: string) => {
@@ -218,6 +221,24 @@ export const ShoppingListView: React.FC = () => {
     setTimeout(() => setVoiceNotice(null), 3500);
   };
 
+  // Pulizia e stop sicuro di SpeechRecognition
+  const cleanupRecognition = () => {
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        isStoppingRef.current = true;
+        recognitionRef.current.abort();
+      } catch (_) {}
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+    setInterimVoiceText('');
+    isStoppingRef.current = false;
+  };
+
   // Gestione robusta Speech to Text compatibile con Safari iOS e Chrome
   const toggleSpeechToText = () => {
     setSpeechError(null);
@@ -230,54 +251,89 @@ export const ShoppingListView: React.FC = () => {
       return;
     }
 
-    // Se sta già ascoltando, ferma l'ascolto
+    // Se sta già ascoltando, ferma l'ascolto immediatamente
     if (isListening || recognitionRef.current) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (_) {}
-        recognitionRef.current = null;
-      }
-      setIsListening(false);
+      cleanupRecognition();
       return;
     }
+
+    // Assicura che l'istanza precedente sia completamente resettata
+    cleanupRecognition();
 
     try {
       const recognition = new SpeechRecognitionClass();
       recognition.lang = 'it-IT';
       recognition.continuous = false;
-      recognition.interimResults = false;
+      recognition.interimResults = true;
       recognition.maxAlternatives = 1;
+
+      let hasReceivedFinalResult = false;
 
       recognition.onstart = () => {
         setIsListening(true);
         setSpeechError(null);
+        setInterimVoiceText('');
+
+        // Watchdog per evitare blocchi infiniti tipici di iOS WebKit:
+        // Se entro 8 secondi non si riceve input, chiude pulitamente
+        if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = setTimeout(() => {
+          if (recognitionRef.current === recognition) {
+            cleanupRecognition();
+          }
+        }, 8000);
       };
 
       recognition.onresult = (event: any) => {
-        const lastResult = event.results?.[event.results.length - 1];
-        const transcript = lastResult?.[0]?.transcript;
-        if (transcript) {
-          parseVoiceInput(transcript);
+        let finalTrans = '';
+        let interimTrans = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const res = event.results[i];
+          const text = res[0]?.transcript || '';
+          if (res.isFinal) {
+            finalTrans += text;
+          } else {
+            interimTrans += text;
+          }
+        }
+
+        if (interimTrans) {
+          setInterimVoiceText(interimTrans);
+        }
+
+        if (finalTrans.trim()) {
+          hasReceivedFinalResult = true;
+          setInterimVoiceText(finalTrans.trim());
+          parseVoiceInput(finalTrans.trim());
+          // Una volta catturato il risultato finale, fermiamo prontamente la sessione
+          setTimeout(() => {
+            cleanupRecognition();
+          }, 300);
         }
       };
 
       recognition.onerror = (event: any) => {
+        if (isStoppingRef.current) return;
         console.warn('Speech recognition error event:', event.error);
         if (event.error === 'not-allowed') {
-          setSpeechError('Accesso al microfono non consentito. Verifica i permessi Safari in Impostazioni.');
+          setSpeechError('Microfono non consentito. Verifica i permessi in Impostazioni.');
         } else if (event.error === 'service-not-allowed') {
-          setSpeechError('Attiva "Riconoscimento vocale" nelle Impostazioni Privacy del tuo iPhone.');
+          setSpeechError('Attiva "Dettatura" o "Riconoscimento vocale" nelle Impostazioni Privacy.');
+        } else if (event.error === 'network') {
+          setSpeechError('Errore di connessione durante il riconoscimento vocale.');
         } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
           setSpeechError(`Avviso microfono: ${event.error}`);
         }
-        setIsListening(false);
-        recognitionRef.current = null;
+        cleanupRecognition();
       };
 
       recognition.onend = () => {
-        setIsListening(false);
-        recognitionRef.current = null;
+        // Se non abbiamo ancora gestito il risultato finale ma c'era del testo provvisorio
+        if (!hasReceivedFinalResult && interimVoiceText.trim()) {
+          parseVoiceInput(interimVoiceText.trim());
+        }
+        cleanupRecognition();
       };
 
       recognitionRef.current = recognition;
@@ -286,19 +342,13 @@ export const ShoppingListView: React.FC = () => {
     } catch (err: any) {
       console.error('Error starting recognition:', err);
       setSpeechError('Tocca nuovamente per riattivare il microfono');
-      setIsListening(false);
-      recognitionRef.current = null;
+      cleanupRecognition();
     }
   };
 
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (_) {}
-        recognitionRef.current = null;
-      }
+      cleanupRecognition();
     };
   }, []);
 
@@ -382,7 +432,13 @@ export const ShoppingListView: React.FC = () => {
           {isListening && (
             <div className="mt-2.5 px-3 py-2 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-2 text-rose-700 text-xs font-bold animate-pulse">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
-              <span>In ascolto... Pronuncia ad es. <em>"1 litro di latte in frigo"</em> o <em>"Pane"</em></span>
+              <span>
+                {interimVoiceText ? (
+                  <>Sto ascoltando: <em className="text-rose-900 font-extrabold underline">{interimVoiceText}</em></>
+                ) : (
+                  <>In ascolto... Pronuncia ad es. <em>"1 litro di latte in frigo"</em> o <em>"Pane"</em></>
+                )}
+              </span>
             </div>
           )}
 
