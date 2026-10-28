@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { StorageLocation } from '../types';
-import { User as UserIcon, Bell, LogOut, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { User as UserIcon, Bell, LogOut, CheckCircle2, ShieldCheck, Key } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
 import { AllItemsSvg, FridgeSvg, FreezerSvg, PantrySvg } from './LocationIconsSvg';
+import { GroqKeyModal } from './GroqKeyModal';
 
 interface HeroHeaderProps {
   user: User | null;
@@ -10,6 +11,7 @@ interface HeroHeaderProps {
   onSignOut: () => void;
   onOpenNotifications?: () => void;
   onOpenPermissions?: () => void;
+  onOpenGroqModal?: () => void;
   hasUrgentItems?: boolean;
   currentTab: string;
   currentLocation: StorageLocation | 'all';
@@ -28,6 +30,7 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
   onSignOut,
   onOpenNotifications,
   onOpenPermissions,
+  onOpenGroqModal,
   hasUrgentItems = false,
   currentTab,
   currentLocation,
@@ -35,6 +38,7 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
   onLocationChange,
 }) => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isGroqModalOpenInternal, setIsGroqModalOpenInternal] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   // Chiudi sottomenu cliccando all'esterno
@@ -195,6 +199,19 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
 
                   {/* Voci del Menu */}
                   <div className="p-1.5 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        if (onOpenGroqModal) onOpenGroqModal();
+                        else setIsGroqModalOpenInternal(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold text-teal-800 hover:bg-teal-50 active:bg-teal-100 transition-colors cursor-pointer text-left"
+                    >
+                      <Key size={16} className="text-teal-600" />
+                      <span>Chiave Vocale Whisper</span>
+                    </button>
+
                     {onOpenPermissions && (
                       <button
                         type="button"
@@ -269,6 +286,12 @@ export const HeroHeader: React.FC<HeroHeaderProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Inserimento / Modifica Chiave Groq Whisper */}
+      <GroqKeyModal
+        isOpen={isGroqModalOpenInternal}
+        onClose={() => setIsGroqModalOpenInternal(false)}
+      />
     </header>
   );
 };

@@ -8,9 +8,13 @@ import {
   Mic,
   MicOff,
   Sparkles,
+  Loader2,
+  Key,
 } from 'lucide-react';
 import { STORAGE_LOCATIONS, CATEGORIES } from '../constants';
 import { StorageLocation, FoodCategory } from '../types';
+import { transcribeAudioWithGroq, getGroqApiKey } from '../utils/whisperAudio';
+import { GroqKeyModal } from './GroqKeyModal';
 
 export const ShoppingListView: React.FC = () => {
   const {
@@ -119,16 +123,19 @@ export const ShoppingListView: React.FC = () => {
     }
   };
 
-  // Speech to Text States
+  // Voice Recognition States (MediaRecorder + Groq Whisper)
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
-  const [interimVoiceText, setInterimVoiceText] = useState<string>('');
+  const [isGroqModalOpen, setIsGroqModalOpen] = useState(false);
+
+  // Audio recording refs (MediaRecorder per iOS/Safari/PWA)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const recordingTimerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
-  const watchdogTimerRef = useRef<any>(null);
-  const isStoppingRef = useRef<boolean>(false);
-  const isStartingRef = useRef<boolean>(false);
-  const lastStopTimeRef = useRef<number>(0);
 
   // Analisi automatica di un singolo alimento vocale
   const parseSingleVoiceItem = (text: string) => {
@@ -238,18 +245,35 @@ export const ShoppingListView: React.FC = () => {
     }
   };
 
-  // Pulizia e stop sicuro di SpeechRecognition
-  const cleanupRecognition = () => {
-    lastStopTimeRef.current = Date.now();
-    isStartingRef.current = false;
-    if (watchdogTimerRef.current) {
-      clearTimeout(watchdogTimerRef.current);
-      watchdogTimerRef.current = null;
+  // Chiusura completa e rilascio dello stream audio
+  const stopAudioTracks = () => {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      audioStreamRef.current = null;
+    }
+  };
+
+  // Pulizia e stop sicuro di SpeechRecognition legacy
+  const cleanupRecognition = () => {
+    stopAudioTracks();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (_) {}
+    }
+    mediaRecorderRef.current = null;
+
     if (recognitionRef.current) {
       const rec = recognitionRef.current;
       recognitionRef.current = null;
-      isStoppingRef.current = true;
       try {
         rec.stop();
       } catch (_) {}
@@ -258,126 +282,133 @@ export const ShoppingListView: React.FC = () => {
       } catch (_) {}
     }
     setIsListening(false);
-    setInterimVoiceText('');
-    isStoppingRef.current = false;
   };
 
-  // Gestione robusta Speech to Text compatibile con Safari iOS e Chrome
-  const toggleSpeechToText = () => {
+  // 1. REGISTRAZIONE CON MEDIARECORDER + GROQ WHISPER (Soluzione 2 - 100% stabile su iOS e PWA)
+  const startRecordingMediaRecorder = async (stream: MediaStream) => {
+    try {
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+
+      // Determina il MIME type supportato da iOS Safari
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        }
+      }
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        stopAudioTracks();
+        setIsListening(false);
+
+        const recordedBlob = new Blob(audioChunksRef.current, {
+          type: mimeType || 'audio/webm',
+        });
+        audioChunksRef.current = [];
+
+        if (recordedBlob.size < 500) {
+          // Audio troppo breve o vuoto
+          return;
+        }
+
+        // Procedi alla trascrizione con Groq Whisper
+        setIsTranscribing(true);
+        setSpeechError(null);
+        try {
+          const text = await transcribeAudioWithGroq(recordedBlob);
+          if (text && text.trim()) {
+            parseVoiceInput(text.trim());
+          } else {
+            setSpeechError('Nessuna voce rilevata nell\'audio.');
+          }
+        } catch (err: any) {
+          console.error('Groq transcription error:', err);
+          if (err.message === 'API_KEY_MISSING') {
+            setIsGroqModalOpen(true);
+            setSpeechError('Configura la chiave API gratuita Groq per attivare il vocale.');
+          } else {
+            setSpeechError(err.message || 'Errore durante la trascrizione vocale.');
+          }
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      recorder.start(250);
+      setIsListening(true);
+      setSpeechError(null);
+
+      // Auto-stop di sicurezza dopo 15 secondi per preservare la batteria
+      recordingTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 15000);
+    } catch (err: any) {
+      console.error('Error starting MediaRecorder:', err);
+      stopAudioTracks();
+      setIsListening(false);
+      setSpeechError('Impossibile avviare il registratore vocale.');
+    }
+  };
+
+  // Toggle Principale: Se l'utente preme durante la registrazione, ferma e trascrive
+  const toggleSpeechToText = async () => {
     setSpeechError(null);
 
-    const SpeechRecognitionClass =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognitionClass) {
-      setSpeechError('Il riconoscimento vocale non è supportato su questo browser. Prova con Chrome o Safari.');
-      return;
-    }
-
-    // Se sta già ascoltando, ferma l'ascolto immediatamente
-    if (isListening || recognitionRef.current || isStartingRef.current) {
+    // Se stiamo già ascoltando/registrando, interrompiamo per procedere alla trascrizione
+    if (isListening) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+        return;
+      }
       cleanupRecognition();
       return;
     }
 
-    // Protezione per Safari iOS: Se una sessione si è appena fermata da meno di 300ms,
-    // aspetta un momento per consentire ad AVAudioSession di deallocarsi
-    const timeSinceLastStop = Date.now() - lastStopTimeRef.current;
-    if (timeSinceLastStop < 250) {
-      setTimeout(() => {
-        toggleSpeechToText();
-      }, 250 - timeSinceLastStop);
+    // Se stiamo già elaborando la trascrizione precedente, attendi
+    if (isTranscribing) return;
+
+    // Se non è impostata alcuna chiave Groq, apriamo subito il modal per guidare l'utente
+    const currentKey = getGroqApiKey();
+    if (!currentKey) {
+      setIsGroqModalOpen(true);
       return;
     }
-
-    // Assicura che l'istanza precedente sia completamente resettata
-    cleanupRecognition();
-    isStartingRef.current = true;
 
     try {
-      const recognition = new SpeechRecognitionClass();
-      recognition.lang = 'it-IT';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
+      // 1. Richiedi stream microfono con getUserMedia (garantito su iOS Safari e PWA)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-      let hasReceivedFinalResult = false;
-
-      recognition.onstart = () => {
-        isStartingRef.current = false;
-        setIsListening(true);
-        setSpeechError(null);
-        setInterimVoiceText('');
-
-        // Watchdog per evitare blocchi infiniti tipici di iOS WebKit:
-        // Se entro 9 secondi non si riceve input, chiude pulitamente
-        if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
-        watchdogTimerRef.current = setTimeout(() => {
-          if (recognitionRef.current === recognition) {
-            cleanupRecognition();
-          }
-        }, 9000);
-      };
-
-      recognition.onresult = (event: any) => {
-        let finalTrans = '';
-        let interimTrans = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const res = event.results[i];
-          const text = res[0]?.transcript || '';
-          if (res.isFinal) {
-            finalTrans += text;
-          } else {
-            interimTrans += text;
-          }
-        }
-
-        if (interimTrans) {
-          setInterimVoiceText(interimTrans);
-        }
-
-        if (finalTrans.trim()) {
-          hasReceivedFinalResult = true;
-          setInterimVoiceText(finalTrans.trim());
-          parseVoiceInput(finalTrans.trim());
-          // Fermiamo subito l'ascolto per rilasciare il microfono e spegnere il pallino arancione
-          cleanupRecognition();
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        if (isStoppingRef.current) return;
-        console.warn('Speech recognition error event:', event.error);
-        if (event.error === 'not-allowed') {
-          setSpeechError('Microfono non consentito: controlla i permessi Safari (icona aA > Impostazioni sito web > Microfono) o in Impostazioni iPhone.');
-        } else if (event.error === 'service-not-allowed') {
-          setSpeechError('Servizio vocale non disponibile: abilita "Abilita Dettatura" in Impostazioni iPhone > Generali > Tastiera, oppure usa il microfono della tastiera.');
-        } else if (event.error === 'network') {
-          setSpeechError('Errore di connessione con il servizio di riconoscimento vocale.');
-        } else if (event.error === 'no-speech') {
-          setSpeechError('Nessuna voce rilevata. Prova a parlare più vicino al microfono.');
-        } else if (event.error !== 'aborted') {
-          setSpeechError(`Avviso microfono: ${event.error}. Puoi usare la dettatura dalla tastiera.`);
-        }
-        cleanupRecognition();
-      };
-
-      recognition.onend = () => {
-        // Se non abbiamo ancora gestito il risultato finale ma c'era del testo provvisorio
-        if (!hasReceivedFinalResult && interimVoiceText.trim()) {
-          parseVoiceInput(interimVoiceText.trim());
-        }
-        cleanupRecognition();
-      };
-
-      recognitionRef.current = recognition;
-      // Chiamata immediata e sincrona per garantire il "user gesture context" su Safari
-      recognition.start();
+      // 2. Avvia la registrazione audio pura MediaRecorder
+      await startRecordingMediaRecorder(stream);
     } catch (err: any) {
-      console.error('Error starting recognition:', err);
-      setSpeechError('Tocca nuovamente per riattivare il microfono');
-      cleanupRecognition();
+      console.warn('getUserMedia error:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setSpeechError('Microfono non consentito: abilitalo nelle impostazioni del browser/iPhone.');
+      } else {
+        setSpeechError('Microfono non disponibile su questo dispositivo.');
+      }
     }
   };
 
@@ -442,14 +473,29 @@ export const ShoppingListView: React.FC = () => {
             <button
               type="button"
               onClick={toggleSpeechToText}
+              disabled={isTranscribing}
               className={`p-2.5 rounded-2xl transition-all cursor-pointer flex items-center justify-center shrink-0 border ${
-                isListening
+                isTranscribing
+                  ? 'bg-amber-500 text-white border-amber-600 animate-spin'
+                  : isListening
                   ? 'bg-rose-500 text-white border-rose-600 animate-pulse ring-4 ring-rose-200 shadow-md shadow-rose-500/30'
                   : 'bg-teal-50 text-teal-700 hover:bg-teal-100/80 border-teal-200/80'
               }`}
-              title={isListening ? 'In ascolto... clicca per fermare' : 'Ditta a voce cosa aggiungere'}
+              title={
+                isTranscribing
+                  ? 'Trascrizione in corso con Groq Whisper...'
+                  : isListening
+                  ? 'Registrazione in corso... clicca per fermare e trascrivere'
+                  : 'Registra a voce con Whisper AI'
+              }
             >
-              {isListening ? <MicOff size={16} /> : <Mic size={16} />}
+              {isTranscribing ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : isListening ? (
+                <MicOff size={16} />
+              ) : (
+                <Mic size={16} />
+              )}
             </button>
 
             {/* Pulsante Aggiungi manuale */}
@@ -464,21 +510,24 @@ export const ShoppingListView: React.FC = () => {
           </form>
 
           {/* Feedback Vocale attivo o Notifiche */}
+          {isTranscribing && (
+            <div className="mt-2.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2 text-amber-800 text-xs font-bold animate-pulse">
+              <Loader2 size={15} className="animate-spin text-amber-600" />
+              <span>Trascrizione ultra-rapida Groq Whisper in corso...</span>
+            </div>
+          )}
+
           {isListening && (
             <div className="mt-2.5 px-3 py-2 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between text-rose-700 text-xs font-bold animate-pulse">
               <div className="flex items-center gap-2 overflow-hidden">
                 <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
                 <span className="truncate">
-                  {interimVoiceText ? (
-                    <>Sto ascoltando: <em className="text-rose-900 font-extrabold underline">{interimVoiceText}</em></>
-                  ) : (
-                    <>In ascolto... Pronuncia ad es. <em>"Latte, 1 kg di mele e pasta"</em></>
-                  )}
+                  Sto registrando... tocca <strong>"Fine"</strong> o di nuovo il microfono appena hai finito di parlare.
                 </span>
               </div>
               <button
                 type="button"
-                onClick={cleanupRecognition}
+                onClick={toggleSpeechToText}
                 className="text-[10px] bg-rose-200 text-rose-900 px-2 py-0.5 rounded-lg shrink-0 font-bold hover:bg-rose-300 transition-colors"
               >
                 Fine
@@ -487,8 +536,19 @@ export const ShoppingListView: React.FC = () => {
           )}
 
           {speechError && (
-            <div className="mt-2.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] font-semibold">
-              ⚠️ {speechError}
+            <div className="mt-2.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-2 text-amber-800 text-xs font-semibold">
+              <div className="flex items-center gap-1.5 truncate">
+                <span>⚠️ {speechError}</span>
+              </div>
+              {speechError.includes('chiave') || speechError.includes('Groq') ? (
+                <button
+                  type="button"
+                  onClick={() => setIsGroqModalOpen(true)}
+                  className="bg-teal-700 hover:bg-teal-800 text-white text-[10px] font-bold px-2 py-1 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Key size={11} /> Imposta Chiave
+                </button>
+              ) : null}
             </div>
           )}
 
@@ -693,20 +753,37 @@ export const ShoppingListView: React.FC = () => {
         <button
           type="button"
           onClick={toggleSpeechToText}
+          disabled={isTranscribing}
           className={`w-14 h-14 rounded-full flex items-center justify-center transition-all cursor-pointer border-2 border-white ${
-            isListening
+            isTranscribing
+              ? 'bg-amber-500 text-white animate-spin shadow-[0_8px_24px_rgba(245,158,11,0.5)]'
+              : isListening
               ? 'bg-rose-500 text-white ring-4 ring-rose-200 animate-pulse shadow-[0_8px_24px_rgba(244,63,94,0.5)] scale-105'
               : 'bg-gradient-to-tr from-teal-600 to-emerald-500 hover:from-teal-500 hover:to-emerald-400 text-white shadow-[0_8px_24px_rgba(13,148,136,0.45)] active:scale-95'
           }`}
-          title={isListening ? 'In ascolto vocale... tocca per fermare' : 'Tocca e detta la spesa'}
+          title={
+            isTranscribing
+              ? 'Trascrizione in corso...'
+              : isListening
+              ? 'Registrazione vocale in corso... tocca per fermare'
+              : 'Tocca e detta la spesa con Whisper AI'
+          }
         >
-          {isListening ? (
+          {isTranscribing ? (
+            <Loader2 size={26} className="animate-spin" />
+          ) : isListening ? (
             <MicOff size={26} strokeWidth={2.4} />
           ) : (
             <Mic size={26} strokeWidth={2.4} />
           )}
         </button>
       </div>
+
+      {/* Modal Gestione Chiave Groq Whisper */}
+      <GroqKeyModal
+        isOpen={isGroqModalOpen}
+        onClose={() => setIsGroqModalOpen(false)}
+      />
     </div>
   );
 };
