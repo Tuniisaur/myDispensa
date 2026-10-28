@@ -140,7 +140,7 @@ export const ShoppingListView: React.FC = () => {
     setTimeout(() => setVoiceNotice(null), 3500);
   };
 
-  // Inizializza Web Speech API SpeechRecognition
+  // Inizializza Web Speech API SpeechRecognition con pulizia e ricreazione istanza
   const toggleSpeechToText = () => {
     setSpeechError(null);
 
@@ -152,10 +152,14 @@ export const ShoppingListView: React.FC = () => {
       return;
     }
 
-    if (isListening) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+    // Se sta già ascoltando, ferma l'istanza attuale
+    if (isListening || recognitionRef.current) {
+      try {
+        if (recognitionRef.current) {
+          recognitionRef.current.abort();
+          recognitionRef.current = null;
+        }
+      } catch (_) {}
       setIsListening(false);
       return;
     }
@@ -165,6 +169,7 @@ export const ShoppingListView: React.FC = () => {
       recognition.lang = 'it-IT';
       recognition.continuous = false;
       recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
         setIsListening(true);
@@ -172,24 +177,28 @@ export const ShoppingListView: React.FC = () => {
       };
 
       recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          parseVoiceInput(transcript);
+        if (event.results && event.results[0] && event.results[0][0]) {
+          const transcript = event.results[0][0].transcript;
+          if (transcript) {
+            parseVoiceInput(transcript);
+          }
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
+        console.warn('Speech recognition error:', event.error);
         if (event.error === 'not-allowed') {
           setSpeechError('Permesso microfono negato. Consenti l’accesso al microfono.');
-        } else if (event.error !== 'no-speech') {
+        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
           setSpeechError(`Errore microfono: ${event.error}`);
         }
         setIsListening(false);
+        recognitionRef.current = null;
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        recognitionRef.current = null;
       };
 
       recognitionRef.current = recognition;
@@ -198,13 +207,17 @@ export const ShoppingListView: React.FC = () => {
       console.error('Error starting recognition:', err);
       setSpeechError('Impossibile attivare il microfono');
       setIsListening(false);
+      recognitionRef.current = null;
     }
   };
 
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.abort();
+        } catch (_) {}
+        recognitionRef.current = null;
       }
     };
   }, []);
