@@ -106,8 +106,13 @@ export async function transcribeAudioWithGroq(audioBlob: Blob, userApiKey?: stri
   const result = await directRes.json();
   let text = result.text || '';
   if (text) {
-    // Normalizzazione senza accenti
-    text = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    // Normalizzazione: rimuove accenti e punti a fine parola/frase
+    text = text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.,;:!?]+(\s|$)/g, '$1')
+      .replace(/[.]+$/g, '')
+      .trim();
   }
   return text;
 }

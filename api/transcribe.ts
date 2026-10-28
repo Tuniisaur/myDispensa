@@ -95,20 +95,18 @@ export default async function handler(request: Request) {
     const data = await groqResponse.json();
     let transcribedText = data.text || '';
 
-    // Rimozione sistematica e pulizia degli accenti (es. caffè -> caffe, tè -> te, bontà -> bonta)
+    // Rimozione sistematica di accenti e punteggiatura finale/spuria
     if (transcribedText) {
       transcribedText = transcribedText
         .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
+        .replace(/[\u0300-\u036f]/g, '') // rimuove accenti
+        .replace(/[.,;:!?]+(\s|$)/g, '$1') // rimuove punti, virgole, punti e virgola a fine parola o fine testo
+        .replace(/[.]+$/g, '') // rimuove eventuali punti residui a fine riga
+        .trim();
     }
 
     return new Response(JSON.stringify({ text: transcribedText }), {
       status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',

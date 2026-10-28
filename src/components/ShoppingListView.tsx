@@ -212,11 +212,14 @@ export const ShoppingListView: React.FC = () => {
     let cleanText = text.trim();
     if (!cleanText) return;
 
+    // Rimuove eventuali punti o punteggiatura finale da ogni singola parola/alimento
+    cleanText = cleanText.replace(/[.,;:!?]+(\s|$)/g, '$1').replace(/[.]+$/g, '').trim();
+
     // Riconosci se l'utente ha dettato più alimenti separati da virgola o " e " / " ed "
     // Esempio: "latte, mele e birra" -> ["latte", "mele", "birra"]
     const rawItems = cleanText
       .split(/\s*,\s*|\s+\bed?\b\s+/i)
-      .map((s) => s.trim())
+      .map((s) => s.replace(/[.,;:!?]+$/g, '').trim())
       .filter((s) => s.length > 0);
 
     const addedList: string[] = [];
