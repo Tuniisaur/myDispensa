@@ -218,32 +218,54 @@ export const ShoppingListView: React.FC = () => {
     setTimeout(() => setVoiceNotice(null), 3500);
   };
 
-  // Inizializza Web Speech API SpeechRecognition con pulizia e ricreazione istanza
-  const toggleSpeechToText = () => {
+  // Gestione robusta Speech to Text compatibile con Safari iOS e Chrome
+  const toggleSpeechToText = async () => {
     setSpeechError(null);
 
-    const SpeechRecognition =
+    const SpeechRecognitionClass =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
+    if (!SpeechRecognitionClass) {
       setSpeechError('Il riconoscimento vocale non è supportato su questo browser. Prova con Chrome o Safari.');
       return;
     }
 
-    // Se sta già ascoltando, ferma l'istanza attuale
-    if (isListening || recognitionRef.current) {
-      try {
-        if (recognitionRef.current) {
+    // Se sta già ascoltando, ferma l'ascolto
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
           recognitionRef.current.abort();
-          recognitionRef.current = null;
-        }
-      } catch (_) {}
+        } catch (_) {}
+        recognitionRef.current = null;
+      }
       setIsListening(false);
       return;
     }
 
+    // Pulisci istanza precedente se presente
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
+      recognitionRef.current = null;
+    }
+
+    // Su Safari iOS sblocca preventivamente la sessione microfono
+    if (navigator?.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (e: any) {
+        console.warn('getUserMedia audio error:', e);
+        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+          setSpeechError('Permesso microfono non concesso. Abilitalo nelle impostazioni del browser.');
+          return;
+        }
+      }
+    }
+
     try {
-      const recognition = new SpeechRecognition();
+      const recognition = new SpeechRecognitionClass();
       recognition.lang = 'it-IT';
       recognition.continuous = false;
       recognition.interimResults = false;
@@ -255,20 +277,21 @@ export const ShoppingListView: React.FC = () => {
       };
 
       recognition.onresult = (event: any) => {
-        if (event.results && event.results[0] && event.results[0][0]) {
-          const transcript = event.results[0][0].transcript;
-          if (transcript) {
-            parseVoiceInput(transcript);
-          }
+        const lastResult = event.results?.[event.results.length - 1];
+        const transcript = lastResult?.[0]?.transcript;
+        if (transcript) {
+          parseVoiceInput(transcript);
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Speech recognition error:', event.error);
+        console.warn('Speech recognition error event:', event.error);
         if (event.error === 'not-allowed') {
-          setSpeechError('Permesso microfono negato. Consenti l’accesso al microfono.');
-        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          setSpeechError(`Errore microfono: ${event.error}`);
+          setSpeechError('Accesso al microfono bloccato. Tocca di nuovo e consenti il microfono.');
+        } else if (event.error === 'no-speech') {
+          // Nessuna voce rilevata, non mostrare errore invadente
+        } else if (event.error !== 'aborted') {
+          setSpeechError(`Avviso microfono: ${event.error}`);
         }
         setIsListening(false);
         recognitionRef.current = null;
@@ -283,7 +306,7 @@ export const ShoppingListView: React.FC = () => {
       recognition.start();
     } catch (err: any) {
       console.error('Error starting recognition:', err);
-      setSpeechError('Impossibile attivare il microfono');
+      setSpeechError('Tocca nuovamente per riattivare il microfono');
       setIsListening(false);
       recognitionRef.current = null;
     }
