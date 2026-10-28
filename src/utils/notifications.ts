@@ -35,35 +35,12 @@ export function checkExpiringItems(items: FoodItem[]): ExpiryNotificationGroup {
  * Richiede il permesso per le notifiche native del browser / dispositivo
  */
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
-    // Su iOS Safari tab normale o browser non compatibili
-    alert('Le notifiche push su iPhone/iPad richiedono di installare l\'app sulla schermata Home ("Aggiungi a Schermata Home") e iOS 16.4 o superiore.');
+  if (!('Notification' in window)) {
     return 'denied';
-  }
-
-  // Se il permesso è già stato negato precedentemente a livello di impostazioni del browser/dispositivo
-  if (Notification.permission === 'denied') {
-    alert('Il permesso notifiche è bloccato nelle impostazioni del tuo browser o dispositivo. Vai nelle impostazioni del browser/sito per abilitarle.');
-    return 'denied';
-  }
-
-  if (Notification.permission === 'granted') {
-    localStorage.setItem('mydispensa_notifications_enabled', 'true');
-    return 'granted';
   }
 
   try {
-    // Compatibilità cross-browser (Promise vs Callback)
-    let permission: NotificationPermission;
-    const req = Notification.requestPermission();
-    if (req && typeof (req as any).then === 'function') {
-      permission = await req;
-    } else {
-      permission = await new Promise((resolve) => {
-        Notification.requestPermission((res) => resolve(res));
-      });
-    }
-
+    const permission = await Notification.requestPermission();
     localStorage.setItem('mydispensa_notifications_enabled', permission === 'granted' ? 'true' : 'false');
     return permission;
   } catch (error) {
@@ -86,15 +63,15 @@ export function sendExpiryPushNotification(title: string, body: string) {
       navigator.serviceWorker.ready.then((registration) => {
         registration.showNotification(title, {
           body,
-          icon: '/pwa-192x192.svg',
-          badge: '/pwa-192x192.svg',
+          icon: '/scadenze.png',
+          badge: '/scadenze.png',
           tag: 'mydispensa-expiry-check',
         });
       });
     } else {
       new Notification(title, {
         body,
-        icon: '/pwa-192x192.svg',
+        icon: '/scadenze.png',
       });
     }
   } catch (e) {
