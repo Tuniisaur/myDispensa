@@ -43,7 +43,7 @@ export const LoginScreen: React.FC = () => {
           </div>
           <div className="flex flex-col items-center justify-center -mt-6 sm:-mt-8 relative z-10">
             <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-emerald-800/80 mb-0.5">
-              Benvenuto in
+              Gestisci il cibo con
             </span>
             <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-zinc-900 leading-none drop-shadow-xs">
               my<span className="text-emerald-600">Dispensa</span>
