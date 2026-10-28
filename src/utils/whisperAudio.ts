@@ -86,6 +86,7 @@ export async function transcribeAudioWithGroq(audioBlob: Blob, userApiKey?: stri
   directFormData.append('model', 'whisper-large-v3-turbo');
   directFormData.append('language', 'it');
   directFormData.append('temperature', '0');
+  directFormData.append('prompt', 'Lista della spesa in italiano per alimenti: latte, caffe, te, pere, mele, pasta, pane, farina.');
   directFormData.append('response_format', 'json');
 
   const directRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
@@ -103,5 +104,10 @@ export async function transcribeAudioWithGroq(audioBlob: Blob, userApiKey?: stri
   }
 
   const result = await directRes.json();
-  return result.text || '';
+  let text = result.text || '';
+  if (text) {
+    // Normalizzazione senza accenti
+    text = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+  return text;
 }

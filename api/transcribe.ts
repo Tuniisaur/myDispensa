@@ -68,6 +68,9 @@ export default async function handler(request: Request) {
     groqFormData.append('model', 'whisper-large-v3-turbo');
     groqFormData.append('language', 'it');
     groqFormData.append('temperature', '0');
+    // Prompt guida per Whisper: orienta lo stile del testo in italiano standard
+    // senza accenti o simboli strani sui prodotti alimentari
+    groqFormData.append('prompt', 'Lista della spesa in italiano per alimenti: latte, caffe, te, pere, mele, pasta, pane, farina.');
     groqFormData.append('response_format', 'json');
 
     const groqResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
@@ -90,9 +93,22 @@ export default async function handler(request: Request) {
     }
 
     const data = await groqResponse.json();
+    let transcribedText = data.text || '';
 
-    return new Response(JSON.stringify(data), {
+    // Rimozione sistematica e pulizia degli accenti (es. caffè -> caffe, tè -> te, bontà -> bonta)
+    if (transcribedText) {
+      transcribedText = transcribedText
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    }
+
+    return new Response(JSON.stringify({ text: transcribedText }), {
       status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
@@ -112,3 +128,4 @@ export default async function handler(request: Request) {
     );
   }
 }
+
