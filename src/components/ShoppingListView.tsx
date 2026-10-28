@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { STORAGE_LOCATIONS, CATEGORIES } from '../constants';
 import { StorageLocation, FoodCategory } from '../types';
-import { transcribeAudioWithGroq, getGroqApiKey } from '../utils/whisperAudio';
+import { transcribeAudioWithGroq } from '../utils/whisperAudio';
 import { GroqKeyModal } from './GroqKeyModal';
 
 export const ShoppingListView: React.FC = () => {
@@ -382,13 +382,6 @@ export const ShoppingListView: React.FC = () => {
 
     // Se stiamo già elaborando la trascrizione precedente, attendi
     if (isTranscribing) return;
-
-    // Se non è impostata alcuna chiave Groq, apriamo subito il modal per guidare l'utente
-    const currentKey = getGroqApiKey();
-    if (!currentKey) {
-      setIsGroqModalOpen(true);
-      return;
-    }
 
     try {
       // 1. Richiedi stream microfono con getUserMedia (garantito su iOS Safari e PWA)
