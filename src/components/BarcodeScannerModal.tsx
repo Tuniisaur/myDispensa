@@ -30,9 +30,30 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [showManualInput, setShowManualInput] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [scannedFeedback, setScannedFeedback] = useState<string | null>(null);
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scannerContainerId = 'barcode-reader-viewport-fullscreen';
+
+  // Inizializza istanza Html5Qrcode con i formati supportati
+  const getOrCreateScanner = () => {
+    if (scannerRef.current) return scannerRef.current;
+    const instance = new Html5Qrcode(scannerContainerId, {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.QR_CODE,
+      ],
+      verbose: false,
+    });
+    scannerRef.current = instance;
+    return instance;
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -48,21 +69,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         setIsLoadingProduct(false);
         setScannedFeedback(null);
 
-        const html5QrCode = new Html5Qrcode(scannerContainerId, {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.UPC_E,
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.CODE_39,
-          ],
-          verbose: false,
-        });
+        const html5QrCode = getOrCreateScanner();
 
-        scannerRef.current = html5QrCode;
-
-        // Inquadratura rettangolare ergonomica e centrata per codici a barre
+        // Inquadratura ergonomica e centrata per codici a barre
         const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
           const width = Math.floor(Math.min(viewfinderWidth * 0.85, 360));
           const height = Math.floor(Math.min(width * 0.58, viewfinderHeight * 0.4));
@@ -70,31 +79,59 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         };
 
         const config = {
-          fps: 20,
+          fps: 15,
           qrbox: qrboxFunction,
           disableFlip: true,
         };
 
-        await html5QrCode.start(
-          { facingMode: 'environment' },
-          config,
-          async (decodedText) => {
-            if (!isMounted) return;
-            handleBarcodeSuccess(decodedText);
-          },
-          () => {}
-        );
-
-        // Configurazione fotocamera
+        // Fallback strategy per fotocamera su iOS PWA e browser:
+        // 1. Prova prima con facingMode: "environment"
+        // 2. Se fallisce, tenta con enumerazione specifica della camera
         try {
-          // @ts-ignore
-          html5QrCode.getRunningTrackCapabilities?.();
-        } catch (_) {}
+          await html5QrCode.start(
+            { facingMode: 'environment' },
+            config,
+            async (decodedText) => {
+              if (!isMounted) return;
+              handleBarcodeSuccess(decodedText);
+            },
+            () => {}
+          );
+        } catch (initialErr) {
+          console.warn('Avvio facingMode environment fallito, provo fallback id camera:', initialErr);
+          const cameras = await Html5Qrcode.getCameras();
+          if (cameras && cameras.length > 0) {
+            // Seleziona la fotocamera posteriore o l'ultima disponibile
+            const backCam = cameras.find((c) => /back|rear|environment|posteriore/i.test(c.label)) || cameras[cameras.length - 1];
+            await html5QrCode.start(
+              backCam.id,
+              config,
+              async (decodedText) => {
+                if (!isMounted) return;
+                handleBarcodeSuccess(decodedText);
+              },
+              () => {}
+            );
+          } else {
+            throw initialErr;
+          }
+        }
+
+        // Assicura che l'elemento video abbia playsinline per iOS
+        const videoEl = document.querySelector(`#${scannerContainerId} video`) as HTMLVideoElement | null;
+        if (videoEl) {
+          videoEl.setAttribute('playsinline', 'true');
+          videoEl.setAttribute('webkit-playsinline', 'true');
+          videoEl.muted = true;
+          try {
+            await videoEl.play();
+          } catch (_) {}
+        }
       } catch (err: any) {
-        console.warn('Errore fotocamera scanner:', err);
+        console.warn('Errore fotocamera scanner video continuo:', err);
         if (isMounted) {
           setErrorMessage(
-            'Impossibile accedere alla fotocamera. Controlla i permessi fotocamera del browser o inserisci il codice a mano.'
+            'Il flusso video continuo della fotocamera non è disponibile in questa modalità. Puoi scattare una foto al codice a barre o inserirlo manualmente.'
           );
         }
       }
@@ -102,7 +139,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
     const timeout = setTimeout(() => {
       startScanner();
-    }, 180);
+    }, 150);
 
     return () => {
       isMounted = false;
@@ -135,6 +172,39 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         setTorchOn(nextState);
       } catch (e) {
         console.log('Torcia non supportata su questo dispositivo', e);
+      }
+    }
+  };
+
+  // Scansione da foto scattata o caricata (100% funzionante su qualsiasi PWA e iPhone)
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsProcessingFile(true);
+      setErrorMessage(null);
+
+      // Fermiamo l'eventuale stream video attivo prima di scansionare il file
+      if (scannerRef.current && scannerRef.current.isScanning) {
+        try {
+          await scannerRef.current.stop();
+        } catch (_) {}
+      }
+
+      const scanner = getOrCreateScanner();
+      const decodedText = await scanner.scanFile(file, false);
+      setIsProcessingFile(false);
+      handleBarcodeSuccess(decodedText);
+    } catch (err: any) {
+      console.warn('Errore scansione da immagine:', err);
+      setIsProcessingFile(false);
+      setErrorMessage(
+        'Nessun codice a barre nitido rilevato nella foto. Prova ad avvicinarti o inseriscilo manualmente.'
+      );
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     }
   };
@@ -379,13 +449,45 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           </div>
         ) : (
           <div className="flex items-center justify-center gap-3">
+            {/* Input nativo invisibile per scattare una foto al codice a barre */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhotoUpload}
+              className="hidden"
+            />
+
+            {/* Pulsante Scatta Foto al codice (100% supportato su PWA iPhone) */}
+            <button
+              type="button"
+              disabled={isProcessingFile}
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-extrabold text-xs px-4 py-3 rounded-2xl border border-emerald-400/40 transition-all cursor-pointer flex items-center gap-2 shadow-xl shrink-0"
+              title="Scatta una foto al codice a barre se il video non parte"
+            >
+              {isProcessingFile ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Elaboro foto...</span>
+                </>
+              ) : (
+                <>
+                  <Camera size={16} />
+                  <span>Scatta foto codice</span>
+                </>
+              )}
+            </button>
+
+            {/* Pulsante Inserisci a mano */}
             <button
               type="button"
               onClick={() => setShowManualInput(true)}
-              className="bg-white/20 hover:bg-white/30 active:scale-95 backdrop-blur-md text-white font-extrabold text-xs px-5 py-3 rounded-2xl border border-white/25 transition-all cursor-pointer flex items-center gap-2 shadow-xl"
+              className="bg-white/20 hover:bg-white/30 active:scale-95 backdrop-blur-md text-white font-extrabold text-xs px-4 py-3 rounded-2xl border border-white/25 transition-all cursor-pointer flex items-center gap-2 shadow-xl shrink-0"
             >
               <Keyboard size={16} />
-              <span>Digita codice a mano</span>
+              <span>Digita a mano</span>
             </button>
           </div>
         )}

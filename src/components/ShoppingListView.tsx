@@ -350,11 +350,12 @@ export const ShoppingListView: React.FC = () => {
         if (event.error === 'not-allowed') {
           setSpeechError('Microfono non consentito. Verifica i permessi in Impostazioni.');
         } else if (event.error === 'service-not-allowed') {
-          setSpeechError('Attiva "Dettatura" o "Riconoscimento vocale" nelle Impostazioni Privacy.');
+          // Su iOS PWA Standalone (app installata da schermata home), Apple blocca SpeechRecognition a livello di sistema operativo (WebKit Bug 225298)
+          setSpeechError('Su app installata iOS, Apple disabilita il microfono web. Puoi dettare comodamente usando il tasto microfono della tastiera!');
         } else if (event.error === 'network') {
           setSpeechError('Errore di connessione durante il riconoscimento vocale.');
         } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          setSpeechError(`Avviso microfono: ${event.error}`);
+          setSpeechError(`Avviso microfono (${event.error}). Puoi usare il tasto microfono della tastiera del telefono.`);
         }
         cleanupRecognition();
       };
