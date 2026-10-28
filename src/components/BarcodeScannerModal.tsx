@@ -70,9 +70,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         };
 
         const config = {
-          fps: 25,
+          fps: 20,
           qrbox: qrboxFunction,
-          aspectRatio: window.innerHeight / window.innerWidth,
+          disableFlip: true,
         };
 
         await html5QrCode.start(
