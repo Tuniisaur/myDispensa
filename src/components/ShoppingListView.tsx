@@ -27,6 +27,84 @@ export const ShoppingListView: React.FC = () => {
   const [quantity, setQuantity] = useState(1);
   const [unit, setUnit] = useState('pz');
   const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const userManuallyChangedLocationRef = useRef(false);
+
+  // Rilevamento intelligente del reparto e categoria dal nome dell'alimento
+  const detectCategoryAndLocationFromName = (text: string): { category: FoodCategory; location: StorageLocation } => {
+    const nameLow = text.toLowerCase().trim();
+    if (!nameLow) return { category: 'other', location: 'pantry' };
+
+    // 1. Surgelati -> Freezer
+    if (/surgelat|gelato|gelati|pizza surgelata|bastoncini|ghiacciol|cubetti di ghiaccio/i.test(nameLow)) {
+      return { category: 'frozen', location: 'freezer' };
+    }
+
+    // 2. Latticini & Freschi da banco -> Frigo
+    if (/latte|burro|formaggio|formaggi|mozzarella|parmigiano|grana|pecorino|yogurt|ricotta|panna|mascarpone|stracchino|gorgonzola|scamorza/i.test(nameLow)) {
+      return { category: 'dairy', location: 'fridge' };
+    }
+
+    // 3. Carne & Salumi -> Frigo (o freezer se esplicitato)
+    if (/pollo|carne|manzo|maiale|vitello|macinato|salsiccia|wurstel|prosciutto|salame|mortadella|bresaola|pancetta|bacon|fesa/i.test(nameLow)) {
+      return { category: 'meat', location: 'fridge' };
+    }
+
+    // 4. Pesce fresco -> Frigo
+    if (/pesce|salmone|orata|spigola|merluzzo|gamber|calamar|cozze|vongole|alici/i.test(nameLow)) {
+      return { category: 'fish', location: 'fridge' };
+    }
+
+    // 5. Frutta & Verdura -> Frigo (o produce)
+    if (/mela|mele|banana|banane|arancia|arance|limon|pera|pere|fragol|uva|pesca|pesche|pomodor|insalata|lattuga|carot|zucchina|zucchine|melanzan|peperon|spinac|broccoli|cavol|cipoll|patat|aglio/i.test(nameLow)) {
+      // Patate e cipolle tradizionalmente in dispensa, il resto verdura fresca in frigo
+      if (/patat|cipoll|aglio/i.test(nameLow)) {
+        return { category: 'produce', location: 'pantry' };
+      }
+      return { category: 'produce', location: 'fridge' };
+    }
+
+    // 6. Pasta, Riso, Cereali -> Dispensa
+    if (/pasta|spaghetti|penne|fusilli|rigatoni|riso|farina|cereali|avena|couscous|polenta|orzo/i.test(nameLow)) {
+      return { category: 'grains', location: 'pantry' };
+    }
+
+    // 7. Pane, Prodotti da Forno, Colazione -> Dispensa
+    if (/pane|pan bauletto|biscotti|fette biscottate|crackers|grissini|brioche|croissant|merendine|frollini|taralli|piadina/i.test(nameLow)) {
+      return { category: 'bakery', location: 'pantry' };
+    }
+
+    // 8. Conserve & Scatolame -> Dispensa
+    if (/tonno|passata|pelati|polpa|sughi|sugo|legumi|fagioli|ceci|piselli|mais|lenticchie|olive|sottoli|sottaceti/i.test(nameLow)) {
+      return { category: 'canned', location: 'pantry' };
+    }
+
+    // 9. Condimenti, Olio, Spezie -> Dispensa
+    if (/olio|aceto|sale|zucchero|pepe|spezie|origano|rosmarino|maionese|ketchup|senape|nutella|marmellata|miele/i.test(nameLow)) {
+      return { category: 'condiments', location: 'pantry' };
+    }
+
+    // 10. Bevande -> Dispensa (o frigo se birra/succo, default dispensa per scorta)
+    if (/acqua|birra|vino|succo|succhi|caffè|caffe|the|tè|cola|aranciata|bibita/i.test(nameLow)) {
+      return { category: 'beverages', location: 'pantry' };
+    }
+
+    // 11. Snack & Dolci -> Dispensa
+    if (/patatine|snack|cioccolato|cioccolata|caramelle|arachidi|noci|mandorle/i.test(nameLow)) {
+      return { category: 'snacks', location: 'pantry' };
+    }
+
+    return { category: 'other', location: 'pantry' };
+  };
+
+  // Quando l'utente digita il nome, aggiorna automaticamente reparto e categoria
+  const handleNameChange = (val: string) => {
+    setName(val);
+    if (!userManuallyChangedLocationRef.current && val.trim().length >= 3) {
+      const detected = detectCategoryAndLocationFromName(val);
+      setLocation(detected.location);
+      setCategory(detected.category);
+    }
+  };
 
   const getLocationLabel = (loc: StorageLocation) => {
     switch (loc) {
@@ -226,15 +304,25 @@ export const ShoppingListView: React.FC = () => {
     e.preventDefault();
     if (!name.trim()) return;
 
+    // Se l'utente non ha impostato manualmente una destinazione, rileva al submit
+    let finalLocation = location;
+    let finalCategory = category;
+    if (!userManuallyChangedLocationRef.current) {
+      const detected = detectCategoryAndLocationFromName(name.trim());
+      finalLocation = detected.location;
+      finalCategory = detected.category;
+    }
+
     addShoppingItem({
       name: name.trim(),
-      location,
-      category,
+      location: finalLocation,
+      category: finalCategory,
       quantity,
       unit,
     });
 
     setName('');
+    userManuallyChangedLocationRef.current = false;
     setIsOptionsOpen(false);
   };
 
@@ -259,7 +347,7 @@ export const ShoppingListView: React.FC = () => {
               type="text"
               placeholder="Cosa ti serve? (o usa il microfono)"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => handleNameChange(e.target.value)}
               className="flex-1 bg-zinc-50 focus:bg-white px-3.5 py-2.5 rounded-2xl border border-zinc-200 text-xs font-semibold text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-teal-600 transition-colors"
             />
 
@@ -332,7 +420,10 @@ export const ShoppingListView: React.FC = () => {
                 </label>
                 <select
                   value={location}
-                  onChange={(e) => setLocation(e.target.value as StorageLocation)}
+                  onChange={(e) => {
+                    userManuallyChangedLocationRef.current = true;
+                    setLocation(e.target.value as StorageLocation);
+                  }}
                   className="w-full bg-white rounded-xl p-2 text-xs border border-teal-200 font-semibold text-zinc-800"
                 >
                   {STORAGE_LOCATIONS.map((l) => (
