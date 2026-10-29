@@ -26,6 +26,11 @@ const InventoryContext = createContext<InventoryContextType | undefined>(undefin
 const LOCAL_STORAGE_ITEMS_KEY = 'mydispensa_local_items';
 const LOCAL_STORAGE_SHOPPING_KEY = 'mydispensa_local_shopping';
 
+const isValidUuid = (id?: string | null): boolean => {
+  if (!id) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+};
+
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [items, setItems] = useState<FoodItem[]>([]);
@@ -75,19 +80,28 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Mappatura utenti:
       // 1: Franca
       // 2: Mavi
-      const userCondition = user.id && !user.id.startsWith('user-') ? `,user_id.eq.${user.id}` : '';
+      const hasValidUuid = isValidUuid(user.id);
+      const userCondition = hasValidUuid ? `,user_id.eq.${user.id}` : '';
+
       if (uname === 'franca') {
         itemsQuery = itemsQuery.or(`legacy_user_id.eq.1${userCondition}`);
         shoppingQuery = shoppingQuery.or(`legacy_user_id.eq.1${userCondition}`);
       } else if (uname === 'mavi') {
         itemsQuery = itemsQuery.or(`legacy_user_id.eq.2${userCondition}`);
         shoppingQuery = shoppingQuery.or(`legacy_user_id.eq.2${userCondition}`);
-      } else if (user.id && !user.id.startsWith('user-')) {
+      } else if (hasValidUuid) {
         itemsQuery = itemsQuery.or(`user_id.eq.${user.id}`);
         shoppingQuery = shoppingQuery.or(`user_id.eq.${user.id}`);
       }
 
       const [itemsRes, shoppingRes] = await Promise.all([itemsQuery, shoppingQuery]);
+
+      if (itemsRes.error) {
+        console.error('Errore query alimenti Supabase:', itemsRes.error);
+      }
+      if (shoppingRes.error) {
+        console.error('Errore query shopping Supabase:', shoppingRes.error);
+      }
 
       if (itemsRes.data) {
         setItems(itemsRes.data as FoodItem[]);
@@ -132,7 +146,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const payload: any = {
       ...itemData,
     };
-    if (user.id && !user.id.startsWith('user-')) {
+    if (isValidUuid(user.id)) {
       payload.user_id = user.id;
     }
     if (legacyId) {
@@ -261,7 +275,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       notes: restoredItem.notes,
     };
 
-    if (user.id && !user.id.startsWith('user-')) {
+    if (isValidUuid(user.id)) {
       payload.user_id = user.id;
     }
     if (legacyId) {
@@ -330,7 +344,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ...itemData,
       completed: false,
     };
-    if (user.id && !user.id.startsWith('user-')) {
+    if (isValidUuid(user.id)) {
       payload.user_id = user.id;
     }
     if (legacyId) {
