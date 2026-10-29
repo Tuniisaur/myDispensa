@@ -645,15 +645,15 @@ export const ShoppingListView: React.FC = () => {
         </div>
 
         {pendingItems.length === 0 ? (
-          <div className="bg-white rounded-3xl p-6 text-center border-2 border-dashed border-zinc-200 shadow-xs">
-            <div className="relative flex justify-center -my-3 select-none pointer-events-none">
+          <div className="bg-white rounded-3xl p-6 text-center border-2 border-dashed border-zinc-200 shadow-xs overflow-hidden">
+            <div className="relative flex justify-center items-center select-none pointer-events-none">
               <img
                 src="/nonelist.png"
                 alt="Nessun articolo nella spesa"
-                className="w-48 h-48 object-contain drop-shadow-md transform scale-105"
+                className="w-44 sm:w-48 h-auto max-w-full aspect-[600/335] object-contain drop-shadow-md"
               />
             </div>
-            <p className="text-zinc-900 font-extrabold text-sm mt-1">Nessun articolo nella spesa!</p>
+            <p className="text-zinc-900 font-extrabold text-sm mt-2">Nessun articolo nella spesa!</p>
             <p className="text-zinc-500 text-xs mt-1 max-w-xs mx-auto leading-relaxed">
               Tocca il microfono o usa il campo sopra per aggiungere velocemente cosa comprare.
             </p>
