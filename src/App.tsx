@@ -371,12 +371,12 @@ export const App: React.FC = () => {
 
                 {/* Lista Alimenti con SwipeToDelete di Spectrum UI con padding separati */}
                 {filteredItems.length === 0 ? (
-                  <div className="relative bg-white rounded-3xl p-6 pt-3 text-center border-2 border-dashed border-zinc-200 mt-2 shadow-xs overflow-hidden">
-                    <div className="relative flex justify-center items-center pointer-events-none select-none z-0">
+                  <div className="relative bg-white rounded-3xl p-6 text-center border-2 border-dashed border-zinc-200 mt-2 shadow-xs overflow-hidden">
+                    <div className="relative flex justify-center items-center pointer-events-none select-none z-0 -my-4 sm:-my-6">
                       <img
                         src="/none.png"
                         alt="Nessun cibo trovato"
-                        className="w-48 sm:w-56 h-auto max-w-full aspect-[600/335] object-contain drop-shadow-md"
+                        className="w-56 h-56 sm:w-64 sm:h-64 object-contain drop-shadow-md select-none pointer-events-none"
                       />
                     </div>
                     <div className="relative z-10 mt-1">

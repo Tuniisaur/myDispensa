@@ -99,14 +99,14 @@ export const ExpirationsView: React.FC<ExpirationsViewProps> = ({
       {/* Sezione: Nessun alimento scaduto o urgente */}
       {categorized.expired.length === 0 && categorized.urgent.length === 0 && items.length > 0 && (
         <div className="bg-white rounded-3xl p-6 text-center border-2 border-dashed border-emerald-200 shadow-xs overflow-hidden">
-          <div className="relative flex justify-center items-center select-none pointer-events-none">
+          <div className="relative flex justify-center items-center select-none pointer-events-none -my-4 sm:-my-6">
             <img
               src="/nonescad.png"
               alt="Nessun alimento scaduto o in scadenza"
-              className="w-48 sm:w-52 h-auto max-w-full aspect-[600/448] object-contain drop-shadow-md"
+              className="w-56 h-56 sm:w-64 sm:h-64 object-contain drop-shadow-md select-none pointer-events-none"
             />
           </div>
-          <h3 className="font-extrabold text-zinc-900 text-sm mt-2">Tutto sotto controllo!</h3>
+          <h3 className="font-extrabold text-zinc-900 text-sm mt-1">Tutto sotto controllo!</h3>
           <p className="text-xs text-zinc-500 mt-1 max-w-xs mx-auto leading-relaxed">
             Non ci sono alimenti scaduti o vicini alla scadenza.
           </p>
